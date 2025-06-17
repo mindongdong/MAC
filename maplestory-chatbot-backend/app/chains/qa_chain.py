@@ -4,7 +4,7 @@ from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from app.chains.prompts import MAPLESTORY_QA_PROMPT, CONDENSE_PROMPT, MAPLESTORY_SYSTEM_PROMPT
 from app.config.settings import settings
 
-def create_qa_chain(llm, retriever, memory=None):
+def create_qa_chain(llm, retriever):
     """메이플스토리 특화 QA 체인 생성 - 설정 기반 시스템 프롬프트 적용"""
     
     # 채팅 기록을 고려한 검색 프롬프트 생성
