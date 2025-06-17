@@ -49,7 +49,7 @@ class MapleBot:
                 "session_id": session_id,
                 "context": {
                     "platform": "discord",
-                    "user_id": user_id
+                    "user_id": f"discord_{user_id}"
                 }
             }
             
@@ -158,9 +158,9 @@ class MapleBot:
             )
             await bot_message.edit(embed=embed)
         else:
-            await self._format_final_response(bot_message, ctx, result.get("response", ""), result.get("sources", []))
+            await self._format_final_response(bot_message, ctx, result.get("response", ""), result.get("sources", []), result.get("log_id"))
 
-    async def _format_final_response(self, bot_message, ctx, full_response: str, sources: list):
+    async def _format_final_response(self, bot_message, ctx, full_response: str, sources: list, log_id: str = None):
         """최종 응답을 포맷팅하여 표시"""
         embed = discord.Embed(
             title="🍄 메이플 가이드 답변",
@@ -200,6 +200,14 @@ class MapleBot:
                 inline=False
             )
         
+        # 피드백 요청 추가
+        if log_id:
+            embed.add_field(
+                name="💭 피드백",
+                value="답변이 도움이 되셨나요? 아래 반응으로 평가해주세요!\n👍 도움됨 | 👎 도움 안됨 | 🤔 보통",
+                inline=False
+            )
+        
         embed.set_footer(
             text=f"✅ 완료 | 질문자: {ctx.author.display_name}",
             icon_url=ctx.author.display_avatar.url
@@ -207,6 +215,20 @@ class MapleBot:
         
         # 최종 메시지 업데이트
         await bot_message.edit(embed=embed)
+        
+        # 피드백 반응 버튼 추가
+        if log_id:
+            await bot_message.add_reaction("👍")
+            await bot_message.add_reaction("👎")  
+            await bot_message.add_reaction("🤔")
+            
+            # 로그 ID를 메시지와 연결하여 저장 (피드백 처리용)
+            if not hasattr(self, '_feedback_logs'):
+                self._feedback_logs = {}
+            self._feedback_logs[bot_message.id] = {
+                'log_id': log_id,
+                'user_id': str(ctx.author.id)
+            }
 
     async def clear_session(self, user_id: str) -> bool:
         """사용자의 세션을 초기화합니다."""
@@ -295,8 +317,8 @@ async def reset_session(ctx):
 async def help_command(ctx):
     """봇 사용법을 안내합니다."""
     embed = discord.Embed(
-        title="🍄 메이플 가이드 봇 사용법",
-        description="메이플스토리 관련 모든 질문에 답변해드립니다!",
+        title="🎮 메이플 이벤트 가이드 봇 사용법",
+        description="**현재 진행 중인 이벤트, 렌 직업, 챌린저스 서버** 전문 가이드입니다!",
         color=discord.Color.blue()
     )
     
@@ -312,13 +334,18 @@ async def help_command(ctx):
     )
     
     embed.add_field(
-        name="💡 질문 예시",
+        name="🎯 전문 분야 질문 예시",
         value=(
-            "• !질문 챌린저스 코인샵에서 판매하는 아이템 목록을 알려줘\n"
-            "• !질문 챌린저스 월드에서 할만한 직업을 추천해줘\n"
-            "• !질문 이벤트에서 얻을 수 있는 주요 보상 목록을 정리해줘\n"
-            "• !질문 챌린저스 서버에서 어떻게 플레이해야할지 가이드를 작성해줘\n"
-            "• !질문 하이퍼버닝 이벤트 정보를 알려줘"
+            "**🎉 이벤트 관련:**\n"
+            "• !질문 여름 이벤트 보상 목록과 참여 방법\n"
+            "• !질문 하이퍼버닝 이벤트 상세 정보\n"
+            "• !질문 ASSEMBLE 업데이트 새로운 기능\n\n"
+            "**⚔️ 렌 직업 관련:**\n"
+            "• !질문 렌 스킬 특징과 육성 가이드\n"
+            "• !질문 렌 260레벨 최단 루트\n\n"
+            "**🏆 챌린저스 서버:**\n"
+            "• !질문 챌린저스 서버 뉴비 가이드\n"
+            "• !질문 챌린저스 코인샵 아이템 목록"
         ),
         inline=False
     )
@@ -335,19 +362,86 @@ async def help_command(ctx):
     )
     
     embed.add_field(
-        name="✨ 특별 기능",
+        name="⚠️ 전문 분야 안내",
         value=(
+            "✅ **전문 영역**: 이벤트, 렌 직업, 챌린저스 서버, 신규 유저 가이드\n"
+            "❌ **제한 영역**: 일반 직업 스킬, 보스 공략, 강화/큐브 확률\n\n"
             "📊 **진행바 표시**: 답변 생성 과정을 시각적으로 확인\n"
             "💬 **세션 기억**: 대화 맥락을 기억하여 연속 질문 가능\n"
-            "⏱️ **안정적 처리**: 복잡한 질문도 충분한 시간을 두고 처리\n"
-            "📚 **출처 제공**: 답변의 근거가 되는 자료를 함께 제공"
+            "📚 **출처 제공**: 답변의 근거가 되는 최신 자료 함께 제공"
         ),
         inline=False
     )
     
-    embed.set_footer(text="💬 24시간 언제든지 질문해주세요!")
+    embed.set_footer(text="🎮 이벤트 & 신규 콘텐츠에 대해 언제든지 물어보세요!")
     
     await ctx.send(embed=embed)
+
+@bot.command(name='로그', aliases=['logs', 'analytics'])
+async def logs_command(ctx, days: int = 7):
+    """로그 분석 정보를 조회합니다. (관리자 전용)"""
+    # 간단한 관리자 체크 (실제로는 더 엄격한 권한 체크 필요)
+    if not ctx.author.guild_permissions.administrator:
+        embed = discord.Embed(
+            title="❌ 권한 없음",
+            description="이 명령어는 관리자만 사용할 수 있습니다.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed)
+        return
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{API_URL}/api/logs/analytics?days={days}") as response:
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    embed = discord.Embed(
+                        title="📊 로그 분석 리포트",
+                        description=f"최근 {days}일간의 사용 통계",
+                        color=discord.Color.blue()
+                    )
+                    
+                    embed.add_field(
+                        name="📈 기본 통계",
+                        value=(
+                            f"총 상호작용: {data['total_interactions']:,}회\n"
+                            f"고유 사용자: {data['unique_users']:,}명\n"
+                            f"성공률: {data['success_rate']:.1%}\n"
+                            f"평균 응답시간: {data['avg_response_time']:.2f}초"
+                        ),
+                        inline=True
+                    )
+                    
+                    embed.add_field(
+                        name="⚠️ 오류 통계",
+                        value=f"오류율: {data['error_rate']:.1%}",
+                        inline=True
+                    )
+                    
+                    if data['most_common_queries']:
+                        queries_text = "\n".join([
+                            f"• {query[:30]}..." if len(query) > 30 else f"• {query}"
+                            for query in data['most_common_queries'][:5]
+                        ])
+                        embed.add_field(
+                            name="🔥 인기 질문",
+                            value=queries_text,
+                            inline=False
+                        )
+                    
+                    await ctx.send(embed=embed)
+                else:
+                    raise Exception(f"API 오류: {response.status}")
+                    
+    except Exception as e:
+        logger.error(f"로그 조회 오류: {e}")
+        embed = discord.Embed(
+            title="❌ 로그 조회 실패",
+            description="로그 정보를 가져오는 중 오류가 발생했습니다.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed)
 
 @bot.command(name='상태', aliases=['status', 'ping'])
 async def status_command(ctx):
@@ -399,6 +493,71 @@ async def status_command(ctx):
     await ctx.send(embed=embed)
 
 # 에러 핸들러
+@bot.event
+async def on_reaction_add(reaction, user):
+    """사용자 피드백 반응 처리"""
+    # 봇 자신의 반응은 무시
+    if user.bot:
+        return
+    
+    # 피드백 대상 메시지인지 확인
+    if (hasattr(maple_bot, '_feedback_logs') and 
+        reaction.message.id in maple_bot._feedback_logs):
+        
+        feedback_info = maple_bot._feedback_logs[reaction.message.id]
+        log_id = feedback_info['log_id']
+        
+        # 해당 사용자의 반응인지 확인
+        if str(user.id) != feedback_info['user_id']:
+            return
+        
+        # 피드백 점수 매핑
+        emoji_to_rating = {
+            "👍": 5,  # 도움됨
+            "👎": 1,  # 도움 안됨
+            "🤔": 3   # 보통
+        }
+        
+        if reaction.emoji in emoji_to_rating:
+            rating = emoji_to_rating[reaction.emoji]
+            
+            # API 서버에 피드백 전송
+            try:
+                async with aiohttp.ClientSession() as session:
+                    payload = {
+                        "log_id": log_id,
+                        "user_id": f"discord_{user.id}",
+                        "rating": rating
+                    }
+                    
+                    async with session.post(
+                        f"{API_URL}/api/logs/feedback",
+                        params=payload
+                    ) as response:
+                        if response.status == 200:
+                            # 피드백 감사 메시지
+                            emoji_messages = {
+                                "👍": "도움이 되었다니 기뻐요! 🎉",
+                                "👎": "더 나은 답변을 위해 개선하겠습니다! 💪",
+                                "🤔": "피드백 감사합니다! 더 나은 서비스를 위해 노력하겠습니다! 🌟"
+                            }
+                            
+                            thanks_embed = discord.Embed(
+                                title="💝 피드백 감사합니다!",
+                                description=emoji_messages[reaction.emoji],
+                                color=discord.Color.gold()
+                            )
+                            
+                            await reaction.message.channel.send(embed=thanks_embed, delete_after=5)
+                            
+                            # 피드백 처리 완료 후 메시지 기록에서 제거
+                            del maple_bot._feedback_logs[reaction.message.id]
+                        else:
+                            logger.warning(f"피드백 전송 실패: {response.status}")
+                            
+            except Exception as e:
+                logger.error(f"피드백 처리 오류: {e}")
+
 @bot.event
 async def on_command_error(ctx, error):
     """명령어 오류를 처리합니다."""
