@@ -1,3 +1,10 @@
+---
+title: "메이플스토리 6월 19일 ASSEMBLE 1차 업데이트 및 제네시스 패스 상세 정리"
+category: class_guide
+source: "data/markdown/inven_documents/메이플스토리 6월 19일 ASSEMBLE 1차 업데이트 및 제네시스 패스 상세 정리.md"
+last_updated: "2025-06-16"
+---
+
 ```
 ---
 title: "메이플스토리 6월 19일 ASSEMBLE 1차 업데이트 및 제네시스 패스 상세 정리"

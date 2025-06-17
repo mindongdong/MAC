@@ -1,3 +1,10 @@
+---
+title: "메이플스토리 ASSEMBLE 쇼케이스 핵심 내용 총정리 (인벤)"
+category: class_guide
+source: "data/markdown/inven_documents/메이플스토리 ASSEMBLE 쇼케이스 핵심 내용 총정리 (인벤).md"
+last_updated: "2025-06-16"
+---
+
 ```
 ---
 title: "메이플스토리 ASSEMBLE 쇼케이스 핵심 내용 총정리 (인벤)"

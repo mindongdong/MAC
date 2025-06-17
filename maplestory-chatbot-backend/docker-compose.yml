@@ -8,19 +8,25 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - QDRANT_URL=http://qdrant:6333
       - REDIS_URL=redis://redis:6379
-      # 답변 품질 개선 설정
+      # 답변 품질 개선 설정 (긴급 조치: 더 관대한 임계값)
       - USE_SYSTEM_PROMPT=true
       - ENABLE_ANSWER_TEMPLATE=false
-      - MIN_RELEVANCE_SCORE=0.7
+      - MIN_RELEVANCE_SCORE=0.005       # 0.01 → 0.005로 낮춤 (더 많은 답변 허용)
       - MAX_REFERENCE_SOURCES=3
       - REQUIRE_URL_IN_SOURCES=true
-      - STRICT_DOCUMENT_MATCHING=true
+      - STRICT_DOCUMENT_MATCHING=false  # true → false로 완화
       - TEMPERATURE=0.3
+      # 검색 최적화 설정 (안정성 우선)
+      - SEARCH_TYPE=similarity          # similarity_score_threshold 대신 similarity 사용
+      - MAX_RETRIEVAL_DOCS=8            # 5 → 8로 늘림 (더 많은 검색 결과)
+      - ENABLE_DOCUMENT_FILTERING=false # 과도한 필터링 방지
+      - ENABLE_RESPONSE_VALIDATION=false # 검증 완화
     depends_on:
       - qdrant
       - redis
     volumes:
       - ./data:/app/data
+      - ./logs:/app/logs
 
   discord-bot:
     build: .
