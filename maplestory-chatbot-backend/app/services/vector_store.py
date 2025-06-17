@@ -123,22 +123,27 @@ class VectorStoreService:
             else:
                 raise
     
-    def get_retriever(self, k: int = 8, search_type: str = "mmr"):
+    def get_retriever(self, k: int = 5, search_type: str = "similarity_score_threshold"):
         """리트리버 반환 - 관련성 강화된 검색 설정"""
         search_kwargs = {"k": k}
         
-        # MMR 검색인 경우 관련성을 더욱 중시하는 파라미터 설정
-        if search_type == "mmr":
+        # 유사도 점수 임계값 검색 - 가장 정확한 정보 검색에 유리
+        if search_type == "similarity_score_threshold":
             search_kwargs.update({
-                "fetch_k": k * 4,  # k의 4배 가져와서 더 많은 후보 확보
-                "lambda_mult": 0.8  # 관련성을 더 중시 (0.7 -> 0.8)
+                "score_threshold": settings.min_relevance_score  # 0.7 이상의 관련성 점수만 반환
             })
         
-        # 유사도 검색의 경우 더 엄격한 임계값 적용
-        elif search_type == "similarity_score_threshold":
+        # MMR 검색인 경우 관련성을 더욱 중시하는 파라미터 설정
+        elif search_type == "mmr":
             search_kwargs.update({
-                "score_threshold": 0.7  # 관련성 점수 임계값 설정
+                "fetch_k": k * 3,  # k의 3배로 줄여서 더 정확한 후보 확보 (4배 -> 3배)
+                "lambda_mult": 0.9  # 관련성을 최대한 중시 (0.8 -> 0.9)
             })
+        
+        # 기본 유사도 검색 - 가장 관련성 높은 문서 우선
+        elif search_type == "similarity":
+            # 추가 설정 없이 순수 유사도 기반 검색
+            pass
         
         return self.vector_store.as_retriever(
             search_type=search_type,
