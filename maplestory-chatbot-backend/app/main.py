@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import logging
 import time
 from app.config import settings
-from app.api import chat, documents, health
+from app.api import chat, documents, health, logs
 
 # 로깅 설정
 logging.basicConfig(
@@ -63,6 +63,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(chat.router)
 app.include_router(documents.router)
 app.include_router(health.router)
+app.include_router(logs.router)
 
 # 루트 엔드포인트
 @app.get("/")
