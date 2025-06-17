@@ -20,10 +20,16 @@ class Settings(BaseSettings):
     enable_answer_template: bool = False  # 답변 템플릿 사용 여부 (품질 문제로 비활성화)
     
     # 답변 품질 개선 설정
-    min_relevance_score: float = 0.7  # 문서 관련성 최소 점수
+    min_relevance_score: float = 0.75  # 문서 관련성 최소 점수 (0.7 -> 0.75로 강화)
     max_reference_sources: int = 3    # 참고자료 최대 개수
     require_url_in_sources: bool = True  # 참고자료에 URL 필수 여부
     strict_document_matching: bool = True  # 엄격한 문서 매칭 모드
+    
+    # 검색 최적화 설정
+    search_type: str = "similarity_score_threshold"  # similarity, mmr, similarity_score_threshold
+    max_retrieval_docs: int = 5  # 검색할 최대 문서 수 (8 -> 5로 줄임)
+    enable_document_filtering: bool = True  # 문서 관련성 사전 필터링 활성화
+    enable_response_validation: bool = True  # 답변 후처리 검증 활성화
     
     # FastAPI 설정
     app_name: str = "메이플스토리 AI 어시스턴트"
