@@ -1,5 +1,7 @@
 from langchain_anthropic import ChatAnthropic
-from langchain.memory import ConversationBufferWindowMemory
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from langchain.callbacks.base import AsyncCallbackHandler
 from langchain.schema import Document
@@ -13,6 +15,8 @@ from app.chains.prompts import MAPLESTORY_ANSWER_TEMPLATE
 import logging
 import re
 import os
+import json
+from difflib import SequenceMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +36,8 @@ class LangChainService:
         self.llm = self._initialize_llm()
         self.embeddings = self._initialize_embeddings()
         self.vector_store = VectorStoreService(self.embeddings)
-        self.memory_store = {}  # session_id: memory
+        self.chat_histories: Dict[str, BaseChatMessageHistory] = {}  # 새로운 메모리 시스템
+        self.retriever = None  # retriever를 별도로 저장
         
     def _initialize_llm(self):
         """Claude LLM 초기화"""
@@ -49,15 +54,11 @@ class LangChainService:
         logger.info(f"Initializing embeddings with provider: {settings.get_embedding_provider()}")
         return get_embeddings()
     
-    def get_or_create_memory(self, session_id: str) -> ConversationBufferWindowMemory:
-        """세션별 메모리 관리"""
-        if session_id not in self.memory_store:
-            self.memory_store[session_id] = ConversationBufferWindowMemory(
-                k=5,  # 최근 5개 대화 기억
-                return_messages=True,
-                memory_key="chat_history"
-            )
-        return self.memory_store[session_id]
+    def get_session_history(self, session_id: str) -> BaseChatMessageHistory:
+        """세션별 채팅 히스토리 관리 - 새로운 메모리 시스템"""
+        if session_id not in self.chat_histories:
+            self.chat_histories[session_id] = ChatMessageHistory()
+        return self.chat_histories[session_id]
     
     def _apply_answer_template(self, answer: str) -> str:
         """답변 템플릿 적용"""
@@ -102,47 +103,87 @@ class LangChainService:
         context: Optional[Dict] = None,
         stream: bool = False
     ) -> Dict:
-        """채팅 처리 메인 메서드"""
+        """채팅 처리 메인 메서드 - 개선된 문서 검증 적용"""
         try:
-            # 메모리 가져오기
-            memory = self.get_or_create_memory(session_id)
+            # retriever 초기화 (매번 새로 생성하지 않고 재사용)
+            if not self.retriever:
+                self.retriever = self.vector_store.get_retriever(
+                    k=settings.max_retrieval_docs,
+                    search_type=settings.search_type
+                )
             
-            # QA 체인 생성
+            # QA 체인 생성 (메모리 히스토리와 함께)
             qa_chain = create_qa_chain(
                 llm=self.llm,
-                retriever=self.vector_store.get_retriever(),
-                memory=memory
+                retriever=self.retriever
+            )
+            
+            # 메모리가 있는 체인으로 래핑
+            chain_with_history = RunnableWithMessageHistory(
+                qa_chain,
+                self.get_session_history,
+                input_messages_key="input",
+                history_messages_key="chat_history",
             )
             
             if stream:
-                return await self._stream_chat(qa_chain, message, context)
+                return await self._stream_chat(chain_with_history, message, session_id, context)
             else:
-                return await self._regular_chat(qa_chain, message, context)
+                return await self._enhanced_regular_chat(chain_with_history, message, session_id, context)
                 
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
             raise
     
-    async def _regular_chat(self, qa_chain, message: str, context: Optional[Dict]) -> Dict:
-        """출처를 포함한 일반 채팅 처리"""
-        # 새로운 체인 API 사용
-        response = await qa_chain.ainvoke({
-            "input": message,  # "question" -> "input"으로 변경
-            "chat_history": []  # 기존 메모리 대신 직접 전달
-        })
+    async def _enhanced_regular_chat(self, qa_chain, message: str, session_id: str, context: Optional[Dict]) -> Dict:
+        """개선된 일반 채팅 처리 - 문서 검증 및 답변 후처리 포함"""
         
-        # 출처 정보 추출
-        sources = self._extract_sources(response.get("context", []))  # "source_documents" -> "context"로 변경
+        # 1. 먼저 문서 검색 (retriever를 직접 사용)
+        raw_documents = await self.retriever.aget_relevant_documents(message)
         
-        # 답변에 템플릿 적용
-        formatted_response = self._apply_answer_template(response["answer"])
+        # 2. 문서 관련성 검증
+        validated_documents = self._validate_document_relevance(raw_documents, message)
         
-        # URL이 있는 참고자료만 표시 (필터링 강화)
+        logger.info(f"Documents: {len(raw_documents)} -> {len(validated_documents)} (after validation)")
+        
+        if not validated_documents:
+            # 관련 문서가 없는 경우
+            return {
+                "response": "죄송합니다. 제공된 문서에서는 해당 질문에 대한 관련 정보를 찾을 수 없습니다. 다른 질문을 해보시거나 더 구체적으로 질문해 주세요.",
+                "sources": [],
+                "metadata": {
+                    "model": settings.claude_model,
+                    "tokens_used": 0,
+                    "sources_count": 0,
+                    "valid_sources_count": 0,
+                    "system_prompt_used": settings.use_system_prompt,
+                    "template_applied": settings.enable_answer_template,
+                    "documents_filtered": len(raw_documents),
+                    "relevance_check": "no_relevant_documents"
+                }
+            }
+        
+        # 3. 검증된 문서로 QA 수행 (세션 히스토리와 함께)
+        response = await qa_chain.ainvoke(
+            {"input": message},
+            config={"configurable": {"session_id": session_id}}
+        )
+        
+        # 4. 답변 후처리 검증
+        raw_answer = response["answer"]
+        validated_answer = self._validate_response(raw_answer, validated_documents, message)
+        
+        # 5. 출처 정보 추출
+        sources = self._extract_sources(validated_documents)
+        
+        # 6. 답변에 템플릿 적용
+        formatted_response = self._apply_answer_template(validated_answer)
+        
+        # 7. URL이 있는 참고자료만 표시 (필터링 강화)
         sources_with_urls = [s for s in sources if s.get('has_url') and s.get('url')]
-        if sources_with_urls:
-            formatted_response += "\n\n## 참고자료\n"
-            for source in sources_with_urls[:3]:  # 최대 3개까지만 표시
-                # URL이 유효한지 확인 (http/https로 시작하는지)
+        if sources_with_urls and settings.require_url_in_sources:
+            formatted_response += "\n\n## 📚 참고자료\n"
+            for source in sources_with_urls[:settings.max_reference_sources]:
                 url = source['url']
                 if url.startswith(('http://', 'https://', 'www.')):
                     formatted_response += f"* **{source['title']}**: {url}\n"
@@ -156,7 +197,12 @@ class LangChainService:
                 "sources_count": len(sources),
                 "valid_sources_count": len(sources_with_urls),
                 "system_prompt_used": settings.use_system_prompt,
-                "template_applied": settings.enable_answer_template
+                "template_applied": settings.enable_answer_template,
+                "documents_filtered": len(raw_documents) - len(validated_documents),
+                "original_documents": len(raw_documents),
+                "validated_documents": len(validated_documents),
+                "relevance_check": "passed",
+                "response_length": len(formatted_response)
             }
         }
     
@@ -164,51 +210,47 @@ class LangChainService:
         self, 
         qa_chain, 
         message: str, 
+        session_id: str,
         context: Optional[Dict]
     ) -> AsyncGenerator[str, None]:
         """스트리밍 채팅 처리"""
-        queue = asyncio.Queue()
-        callback = StreamingCallbackHandler(queue)
-        
-        # 비동기 태스크로 체인 실행
-        task = asyncio.create_task(
-            qa_chain.ainvoke(
-                {"input": message, "chat_history": []},  # 새로운 API 형식
-                callbacks=[callback]
-            )
-        )
-        
-        # 스트리밍 응답 생성
-        collected_response = ""
-        while True:
-            token = await queue.get()
-            if token is None:
-                break
-            collected_response += token
-            yield token
-        
-        # 태스크 완료 대기
-        result = await task
-        
-        # 답변 템플릿 적용 (스트리밍에서는 후처리로 적용)
-        if settings.enable_answer_template:
-            # 현재까지 수집된 응답에 템플릿 적용
-            template_applied = self._apply_answer_template(collected_response)
-            # 원본과 다른 경우 차이만 전송
-            if template_applied != collected_response:
-                yield f"\n\n[템플릿 적용됨]"
-        
-        # 소스 문서 반환
-        sources = self._extract_sources(result.get("context", []))  # "source_documents" -> "context"
-        if sources:
-            yield f"\n\n**📚 참고 자료:**\n"
-            for i, source in enumerate(sources[:3], 1):
-                yield f"{i}. [{source['title']}] - {source['category']}"
-                if source['author'] != "Unknown":
-                    yield f" (작성자: {source['author']})"
-                if source['section'] != "N/A":
-                    yield f" - {source['section']}"
-                yield "\n"
+        try:
+            # 스트리밍을 위한 큐 생성
+            queue = asyncio.Queue()
+            
+            # 스트리밍 콜백 핸들러 생성
+            streaming_handler = StreamingCallbackHandler(queue)
+            
+            # 스트리밍 응답 생성
+            async def stream_response():
+                try:
+                    response = await qa_chain.ainvoke(
+                        {"input": message},
+                        config={
+                            "configurable": {"session_id": session_id},
+                            "callbacks": [streaming_handler]
+                        }
+                    )
+                except Exception as e:
+                    await queue.put(f"오류가 발생했습니다: {str(e)}")
+                    await queue.put(None)
+            
+            # 백그라운드에서 응답 생성 시작
+            task = asyncio.create_task(stream_response())
+            
+            # 스트리밍 토큰을 순차적으로 yield
+            while True:
+                token = await queue.get()
+                if token is None:  # 종료 신호
+                    break
+                yield token
+            
+            # 태스크 완료 대기
+            await task
+            
+        except Exception as e:
+            logger.error(f"Streaming chat error: {str(e)}")
+            yield f"스트리밍 중 오류가 발생했습니다: {str(e)}"
     
     def _extract_sources(self, documents: List[Document]) -> List[Dict]:
         """개선된 소스 문서 메타데이터 추출 - URL 정보 우선 처리"""
@@ -277,6 +319,171 @@ class LangChainService:
         await self.vector_store.add_documents(documents)
     
     def clear_memory(self, session_id: str):
-        """세션 메모리 초기화"""
-        if session_id in self.memory_store:
-            del self.memory_store[session_id] 
+        """특정 세션의 메모리 초기화"""
+        if session_id in self.chat_histories:
+            self.chat_histories[session_id].clear()
+            logger.info(f"Cleared memory for session: {session_id}")
+    
+    def _extract_keywords(self, query: str) -> List[str]:
+        """질문에서 핵심 키워드 추출"""
+        # 메이플스토리 특화 키워드 패턴
+        maple_patterns = [
+            r'[가-힣]+\s*(?:보스|스킬|큐브|코인|포인트|이벤트|직업|클래스)',
+            r'(?:하드|이지|헬|카오스)\s*[가-힣]+',
+            r'[가-힣]+\s*(?:샵|상점)',
+            r'챌린저스?\s*[가-힣]*',
+            r'[가-힣]{2,}(?:렌|제로|카데나|일리움|호영|아델|카인|라라|아크)',
+        ]
+        
+        keywords = []
+        
+        # 패턴 매칭으로 키워드 추출
+        for pattern in maple_patterns:
+            matches = re.findall(pattern, query, re.IGNORECASE)
+            keywords.extend(matches)
+        
+        # 일반 명사 추출 (2글자 이상 한글)
+        general_keywords = re.findall(r'[가-힣]{2,}', query)
+        keywords.extend(general_keywords)
+        
+        # 중복 제거 및 소문자 변환
+        unique_keywords = list(set([kw.strip().lower() for kw in keywords if len(kw.strip()) > 1]))
+        
+        return unique_keywords[:10]  # 최대 10개로 제한
+    
+    def _calculate_title_relevance(self, title: str, query: str) -> float:
+        """문서 제목과 질문의 관련성 점수 계산"""
+        if not title:
+            return 0.0
+            
+        title_lower = title.lower()
+        query_lower = query.lower()
+        
+        # 직접 매칭 점수
+        direct_match = SequenceMatcher(None, title_lower, query_lower).ratio()
+        
+        # 키워드 매칭 점수
+        query_keywords = self._extract_keywords(query)
+        title_keywords = self._extract_keywords(title)
+        
+        keyword_matches = 0
+        for q_kw in query_keywords:
+            for t_kw in title_keywords:
+                if q_kw in t_kw or t_kw in q_kw:
+                    keyword_matches += 1
+                    break
+        
+        keyword_score = keyword_matches / max(len(query_keywords), 1)
+        
+        # 최종 점수 (직접 매칭 70% + 키워드 매칭 30%)
+        final_score = (direct_match * 0.7) + (keyword_score * 0.3)
+        
+        return min(final_score, 1.0)
+    
+    def _validate_document_relevance(self, documents: List[Document], query: str) -> List[Document]:
+        """문서 관련성 검증 및 필터링"""
+        if not settings.enable_document_filtering:
+            logger.info(f"Document filtering disabled - returning {len(documents)} documents as-is")
+            return documents[:settings.max_reference_sources]
+        
+        validated_docs = []
+        query_keywords = self._extract_keywords(query)
+        
+        for doc in documents:
+            # 1. 제목 관련성 검사
+            title = doc.metadata.get('title', '')
+            title_relevance = self._calculate_title_relevance(title, query)
+            
+            # 2. 내용 키워드 매칭 검사
+            content_lower = doc.page_content.lower()
+            keyword_matches = sum(1 for kw in query_keywords if kw in content_lower)
+            content_relevance = keyword_matches / max(len(query_keywords), 1)
+            
+            # 3. 메타데이터 기반 관련성 검사
+            category = doc.metadata.get('category', '')
+            class_name = doc.metadata.get('class', '')
+            
+            # 직업명이 질문에 있는 경우 해당 직업 문서 우선
+            metadata_bonus = 0.0
+            for keyword in query_keywords:
+                if keyword in class_name.lower():
+                    metadata_bonus += 0.3
+                if keyword in category.lower():
+                    metadata_bonus += 0.2
+            
+            # 최종 관련성 점수 계산
+            final_relevance = (title_relevance * 0.4) + (content_relevance * 0.4) + metadata_bonus
+            
+            # 임계값 이상인 문서만 포함
+            if final_relevance >= 0.3:  # 30% 이상 관련성
+                doc.metadata['relevance_score'] = final_relevance
+                validated_docs.append(doc)
+                
+                logger.debug(f"Document accepted: {title} (relevance: {final_relevance:.2f})")
+            else:
+                logger.debug(f"Document filtered out: {title} (relevance: {final_relevance:.2f})")
+        
+        # 관련성 점수 순으로 정렬
+        validated_docs.sort(key=lambda x: x.metadata.get('relevance_score', 0), reverse=True)
+        
+        return validated_docs[:settings.max_reference_sources]
+    
+    def _validate_response(self, response: str, documents: List[Document], query: str) -> str:
+        """답변 후처리 검증 - 할루시네이션 방지"""
+        if not settings.enable_response_validation:
+            return response
+        
+        validated_response = response
+        
+        # 1. 의심스러운 패턴 검사
+        suspicious_patterns = [
+            (r'\d+개(?:\s*(?:의|를|을|이|가))?', '구체적 수량'),
+            (r'[가-힣]+\s*큐브', '큐브 아이템'),
+            (r'[가-힣]+\s*스킬', '스킬명'),
+            (r'\d+(?:,\d{3})*\s*(?:메소|포인트|점수)', '수치 정보'),
+            (r'(?:대략|약|수십억|다수|여러|일반적으로|보통)', '모호한 표현'),
+        ]
+        
+        warnings = []
+        
+        for pattern, description in suspicious_patterns:
+            matches = re.findall(pattern, validated_response, re.IGNORECASE)
+            for match in matches:
+                # 문서에서 해당 내용 확인
+                if not self._verify_in_documents(match, documents):
+                    # 모호한 표현은 제거
+                    if description == '모호한 표현':
+                        validated_response = re.sub(pattern, '', validated_response, flags=re.IGNORECASE)
+                        warnings.append(f"모호한 표현 '{match}' 제거됨")
+                    else:
+                        warnings.append(f"검증되지 않은 {description}: '{match}'")
+        
+        # 2. 관련 없는 문서 기반 답변 검사
+        query_keywords = self._extract_keywords(query)
+        response_keywords = self._extract_keywords(validated_response)
+        
+        # 답변의 키워드가 질문과 너무 동떨어진 경우
+        keyword_overlap = len(set(query_keywords) & set(response_keywords))
+        if keyword_overlap == 0 and len(query_keywords) > 0:
+            warnings.append("답변이 질문과 관련성이 낮을 수 있음")
+        
+        # 경고가 있으면 로그에 기록
+        if warnings:
+            logger.warning(f"Response validation warnings: {'; '.join(warnings)}")
+        
+        return validated_response.strip()
+    
+    def _verify_in_documents(self, text: str, documents: List[Document]) -> bool:
+        """텍스트가 참고 문서에 포함되어 있는지 확인"""
+        text_lower = text.lower().strip()
+        
+        for doc in documents:
+            if text_lower in doc.page_content.lower():
+                return True
+            
+            # 메타데이터에서도 확인
+            for key, value in doc.metadata.items():
+                if isinstance(value, str) and text_lower in value.lower():
+                    return True
+        
+        return False 
