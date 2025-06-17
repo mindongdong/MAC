@@ -79,14 +79,46 @@ def validate_file(file_path: str):
     
     # 프론트매터 추출
     metadata = {}
+    
+    # 코드 블록으로 감싸진 경우 처리
+    if content.startswith('```'):
+        # 첫 번째 ```와 마지막 ``` 제거
+        first_backtick_end = content.find('\n', 3)
+        last_backtick_start = content.rfind('\n```')
+        if first_backtick_end != -1 and last_backtick_start != -1:
+            content = content[first_backtick_end + 1:last_backtick_start]
+    
+    # 프론트매터 파싱
     if content.startswith('---'):
         end_index = content.find('---', 3)
         if end_index != -1:
             yaml_content = content[3:end_index].strip()
-            try:
-                metadata = yaml.safe_load(yaml_content) or {}
-            except yaml.YAMLError as e:
-                return False, [f"YAML 파싱 오류: {str(e)}"], []
+            
+            # 한 줄로 연결된 YAML 처리
+            if '\n' not in yaml_content or yaml_content.count('\n') < 3:
+                # YAML이 한 줄로 연결되어 있다면 수정 시도
+                try:
+                    # 간단한 정규식으로 한 줄 YAML을 여러 줄로 변환
+                    import re
+                    # 따옴표로 둘러싸인 값 뒤의 공백과 새 키를 찾아 줄바꿈 추가
+                    fixed_yaml = re.sub(r'"\s+([a-zA-Z_][a-zA-Z0-9_]*:)', r'"\n\1', yaml_content)
+                    # tags: 뒤의 줄바꿈 처리
+                    fixed_yaml = re.sub(r'tags:\s*-', r'tags:\n-', fixed_yaml)
+                    # sources: 뒤의 줄바꿈 처리  
+                    fixed_yaml = re.sub(r'sources:\s*-', r'sources:\n-', fixed_yaml)
+                    # keywords: 뒤의 줄바꿈 처리
+                    fixed_yaml = re.sub(r'keywords:\s*-', r'keywords:\n-', fixed_yaml)
+                    
+                    metadata = yaml.safe_load(fixed_yaml) or {}
+                except yaml.YAMLError as e:
+                    return False, [f"YAML 파싱 오류 (한 줄 형식): {str(e)[:100]}..."], []
+                except Exception as e:
+                    return False, [f"YAML 수정 실패: {str(e)[:100]}..."], []
+            else:
+                try:
+                    metadata = yaml.safe_load(yaml_content) or {}
+                except yaml.YAMLError as e:
+                    return False, [f"YAML 파싱 오류: {str(e)[:100]}..."], []
     else:
         return False, ["프론트매터 없음"], []
     
@@ -98,6 +130,14 @@ def validate_file(file_path: str):
     
     # 경고 사항 검사
     warnings = []
+    
+    # YAML 형식 문제 확인
+    if content.startswith('---'):
+        end_index = content.find('---', 3)
+        if end_index != -1:
+            yaml_content = content[3:end_index].strip()
+            if '\n' not in yaml_content or yaml_content.count('\n') < 3:
+                warnings.append("YAML 한 줄 형식 (수정 필요)")
     
     # 업데이트 날짜 확인
     if not metadata.get('updated_date'):

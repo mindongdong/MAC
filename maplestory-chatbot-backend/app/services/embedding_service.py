@@ -1,6 +1,7 @@
 from typing import Union, List
 from app.config import settings
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +36,17 @@ class EmbeddingService:
     
     @staticmethod
     def _get_local_embeddings():
-        """로컬 HuggingFace 임베딩 모델"""
+        """로컬 HuggingFace 임베딩 모델 - Rate Limit 문제 해결"""
         try:
+            # Hugging Face 토큰 설정 (Rate Limit 회피)
+            if settings.huggingface_api_token:
+                os.environ['HUGGINGFACE_HUB_TOKEN'] = settings.huggingface_api_token
+                logger.info("Hugging Face token configured")
+            
             # 새로운 langchain-huggingface 패키지 사용
             from langchain_huggingface import HuggingFaceEmbeddings
             
-            # 한국어에 최적화된 모델 사용
+            # 안정적인 모델 사용
             model_name = settings.local_embedding_model
             
             logger.info(f"Initializing local embeddings with model: {model_name}")
@@ -65,16 +71,17 @@ class EmbeddingService:
                 encode_kwargs={'normalize_embeddings': True}
             )
         except Exception as e:
-            logger.error(f"Failed to initialize local embeddings: {e}")
+            logger.error(f"Failed to initialize local embeddings with {settings.local_embedding_model}: {e}")
+            logger.warning("Attempting fallback to lightweight model...")
             # 최후의 수단: 가장 간단한 모델 사용
             return EmbeddingService._get_fallback_embeddings()
     
     @staticmethod
     def _get_fallback_embeddings():
-        """최후의 수단: 가장 간단한 임베딩 모델"""
+        """최후의 수단: 가장 경량이고 안정적인 임베딩 모델"""
         try:
             from langchain_huggingface import HuggingFaceEmbeddings
-            logger.warning("Using fallback embedding model: all-MiniLM-L6-v2")
+            logger.warning("Using fallback embedding model: all-MiniLM-L6-v2 (90MB)")
             return HuggingFaceEmbeddings(
                 model_name="sentence-transformers/all-MiniLM-L6-v2",
                 model_kwargs={'device': 'cpu'},
@@ -82,9 +89,10 @@ class EmbeddingService:
             )
         except Exception as e:
             logger.error(f"All embedding methods failed: {e}")
+            logger.error("Please check your internet connection or try setting OPENAI_API_KEY")
             raise RuntimeError("No embedding model available. Please install sentence-transformers or provide OpenAI API key.")
 
-# 편의 함수
+# 편의를 위한 함수
 def get_embeddings():
-    """임베딩 모델 인스턴스 반환"""
+    """임베딩 서비스 인스턴스 반환"""
     return EmbeddingService.get_embeddings() 

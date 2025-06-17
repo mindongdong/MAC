@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     # API Keys
     anthropic_api_key: str
     openai_api_key: Optional[str] = None  # 임베딩용 (선택사항)
+    huggingface_api_token: Optional[str] = None  # Rate Limit 회피용 (선택사항)
     
     # Claude 설정
     claude_model: str = "claude-3-5-haiku-20241022"
@@ -24,10 +25,13 @@ class Settings(BaseSettings):
     qdrant_api_key: Optional[str] = None
     collection_name: str = "maplestory_docs"
     
-    # 임베딩 설정 - 유연한 구조
+    # 임베딩 설정 - 안정성 개선
     embedding_provider: str = "auto"  # auto, openai, local
     embedding_model: str = "text-embedding-ada-002"  # OpenAI 모델
-    local_embedding_model: str = "intfloat/multilingual-e5-large"  # 로컬 모델
+    local_embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"  # 안정적인 다국어 모델 (420MB)
+    # 대안 모델들 (문제 발생 시 사용):
+    # "sentence-transformers/all-MiniLM-L6-v2"  # 초경량 (90MB) - 영어 중심
+    # "intfloat/multilingual-e5-large"  # 고성능 (1.24GB) - Rate Limit 위험
     chunk_size: int = 1000
     chunk_overlap: int = 200
     
