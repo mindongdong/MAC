@@ -123,15 +123,21 @@ class VectorStoreService:
             else:
                 raise
     
-    def get_retriever(self, k: int = 5, search_type: str = "similarity"):
-        """리트리버 반환"""
+    def get_retriever(self, k: int = 8, search_type: str = "mmr"):
+        """리트리버 반환 - 관련성 강화된 검색 설정"""
         search_kwargs = {"k": k}
         
-        # MMR 검색인 경우 추가 파라미터
+        # MMR 검색인 경우 관련성을 더욱 중시하는 파라미터 설정
         if search_type == "mmr":
             search_kwargs.update({
-                "fetch_k": k * 4,  # k의 4배 가져와서 다양성 확보
-                "lambda_mult": 0.5  # 다양성 vs 관련성 균형
+                "fetch_k": k * 4,  # k의 4배 가져와서 더 많은 후보 확보
+                "lambda_mult": 0.8  # 관련성을 더 중시 (0.7 -> 0.8)
+            })
+        
+        # 유사도 검색의 경우 더 엄격한 임계값 적용
+        elif search_type == "similarity_score_threshold":
+            search_kwargs.update({
+                "score_threshold": 0.7  # 관련성 점수 임계값 설정
             })
         
         return self.vector_store.as_retriever(

@@ -13,7 +13,17 @@ class Settings(BaseSettings):
     # Claude 설정
     claude_model: str = "claude-3-5-haiku-20241022"
     max_tokens: int = 4096
-    temperature: float = 0.7
+    temperature: float = 0.3  # 정확성을 위해 낮춤 (0.7 -> 0.3)
+    
+    # 프롬프트 설정
+    use_system_prompt: bool = True  # 새로운 시스템 프롬프트 사용 여부
+    enable_answer_template: bool = False  # 답변 템플릿 사용 여부 (품질 문제로 비활성화)
+    
+    # 답변 품질 개선 설정
+    min_relevance_score: float = 0.7  # 문서 관련성 최소 점수
+    max_reference_sources: int = 3    # 참고자료 최대 개수
+    require_url_in_sources: bool = True  # 참고자료에 URL 필수 여부
+    strict_document_matching: bool = True  # 엄격한 문서 매칭 모드
     
     # FastAPI 설정
     app_name: str = "메이플스토리 AI 어시스턴트"
@@ -45,9 +55,18 @@ class Settings(BaseSettings):
     cors_origins: list = ["http://localhost:3000", "https://yourdomain.com"]
     rate_limit_per_minute: int = 10
     
+    # Discord Bot 설정 (누락된 필드들 추가)
+    discord_bot_token: Optional[str] = None
+    api_url: str = "http://localhost:8000"
+    
+    # 로깅 및 기타 설정 (누락된 필드들 추가)
+    log_level: str = "INFO"
+    max_chunk_size: int = 1000  # chunk_size와 중복이지만 env에 있으므로 추가
+    
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"  # 정의되지 않은 환경변수 무시
     
     def get_embedding_provider(self) -> str:
         """임베딩 제공자 자동 결정 - Voyage AI 우선"""
