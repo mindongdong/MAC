@@ -89,7 +89,10 @@ class VectorStoreService:
                     logger.error(f"Failed to get embedding dimensions: {embed_error}")
                     logger.info(f"Using default dimension for provider: {settings.get_embedding_provider()}")
                     # 기본 차원 설정
-                    if settings.get_embedding_provider() == "openai":
+                    provider = settings.get_embedding_provider()
+                    if provider == "voyage":
+                        vector_size = 1024  # voyage-3.5-lite 기본 차원
+                    elif provider == "openai":
                         vector_size = 1536  # text-embedding-ada-002 기본 차원
                     else:
                         vector_size = 384   # 대부분의 HuggingFace 모델 기본 차원

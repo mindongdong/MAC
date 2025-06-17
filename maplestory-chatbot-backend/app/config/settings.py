@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     openai_api_key: Optional[str] = None  # 임베딩용 (선택사항)
     huggingface_api_token: Optional[str] = None  # Rate Limit 회피용 (선택사항)
+    voyage_api_key: Optional[str] = None  # Voyage AI 임베딩용
     
     # Claude 설정
     claude_model: str = "claude-3-5-haiku-20241022"
@@ -25,9 +26,10 @@ class Settings(BaseSettings):
     qdrant_api_key: Optional[str] = None
     collection_name: str = "maplestory_docs"
     
-    # 임베딩 설정 - 안정성 개선
-    embedding_provider: str = "auto"  # auto, openai, local
+    # 임베딩 설정 - Voyage AI 우선 사용
+    embedding_provider: str = "auto"  # auto, voyage, openai, local
     embedding_model: str = "text-embedding-ada-002"  # OpenAI 모델
+    voyage_model: str = "voyage-3.5-lite"  # Voyage AI 모델
     local_embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"  # 안정적인 다국어 모델 (420MB)
     # 대안 모델들 (문제 발생 시 사용):
     # "sentence-transformers/all-MiniLM-L6-v2"  # 초경량 (90MB) - 영어 중심
@@ -48,9 +50,11 @@ class Settings(BaseSettings):
         case_sensitive = False
     
     def get_embedding_provider(self) -> str:
-        """임베딩 제공자 자동 결정"""
+        """임베딩 제공자 자동 결정 - Voyage AI 우선"""
         if self.embedding_provider == "auto":
-            if self.openai_api_key and self.openai_api_key != "your_openai_api_key_here":
+            if self.voyage_api_key and self.voyage_api_key != "your_voyage_api_key_here":
+                return "voyage"
+            elif self.openai_api_key and self.openai_api_key != "your_openai_api_key_here":
                 return "openai"
             else:
                 return "local"

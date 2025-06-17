@@ -34,11 +34,18 @@ def test_embedding_provider():
     
     anthropic_key = settings.anthropic_api_key
     openai_key = settings.openai_api_key
+    voyage_key = settings.voyage_api_key
     
     table.add_row(
         "ANTHROPIC_API_KEY",
         "✅ 설정됨" if anthropic_key and anthropic_key != "your_anthropic_api_key_here" else "❌ 미설정",
         f"{anthropic_key[:10]}..." if anthropic_key and len(anthropic_key) > 10 else "None"
+    )
+    
+    table.add_row(
+        "VOYAGE_API_KEY",
+        "✅ 설정됨" if voyage_key and voyage_key != "your_voyage_api_key_here" else "❌ 미설정",
+        f"{voyage_key[:10]}..." if voyage_key and len(voyage_key) > 10 else "None"
     )
     
     table.add_row(
