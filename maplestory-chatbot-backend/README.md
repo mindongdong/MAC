@@ -67,11 +67,33 @@ cp env.example .env
 
 # .env 파일 편집
 ANTHROPIC_API_KEY=your_anthropic_api_key
-OPENAI_API_KEY=your_openai_api_key  # 임베딩용
+VOYAGE_API_KEY=your_voyage_api_key  # 임베딩용 (권장)
+OPENAI_API_KEY=your_openai_api_key  # 임베딩용 (선택사항)
 QDRANT_URL=http://localhost:6333
 ```
 
-### 3. Qdrant 벡터 데이터베이스 실행
+### 3. 임베딩 모델 설정
+
+프로젝트는 다양한 임베딩 모델을 지원합니다 (우선순위 순):
+
+1. **Voyage AI (권장)**: `voyage-3.5-lite` 모델 사용
+
+   - 최신 1024차원 임베딩
+   - 한국어 지원 우수
+   - 높은 성능과 품질
+
+2. **OpenAI**: `text-embedding-ada-002` 모델
+
+   - 1536차원 임베딩
+   - 안정적인 성능
+
+3. **로컬 모델**: HuggingFace 모델
+   - 인터넷 연결 불필요
+   - 무료 사용 가능
+
+설정에서 `EMBEDDING_PROVIDER=auto`로 설정하면 자동으로 우선순위에 따라 선택됩니다.
+
+### 4. Qdrant 벡터 데이터베이스 실행
 
 ```bash
 # Docker로 Qdrant 실행
