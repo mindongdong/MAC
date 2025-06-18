@@ -73,7 +73,7 @@ data/output/
 *.pickle
 
 # AI/ML 모델 파일
-models/
+# models/
 *.model
 *.bin
 *.safetensors
