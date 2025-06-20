@@ -17,6 +17,7 @@ import re
 import os
 import json
 from difflib import SequenceMatcher
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -179,14 +180,16 @@ class LangChainService:
         # 6. 답변에 템플릿 적용
         formatted_response = self._apply_answer_template(validated_answer)
         
-        # 7. URL이 있는 참고자료만 표시 (필터링 강화)
+        # 7. 참고자료를 URL만 출력하도록 간소화
         sources_with_urls = [s for s in sources if s.get('has_url') and s.get('url')]
         if sources_with_urls and settings.require_url_in_sources:
             formatted_response += "\n\n## 📚 참고자료\n"
             for source in sources_with_urls[:settings.max_reference_sources]:
-                url = source['url']
+                url = source.get('url', '')
+                
                 if url.startswith(('http://', 'https://', 'www.')):
-                    formatted_response += f"* **{source['title']}**: {url}\n"
+                    # 간단한 형식: URL만 표시
+                    formatted_response += f"* {url}\n"
         
         return {
             "response": formatted_response,
@@ -253,7 +256,7 @@ class LangChainService:
             yield f"스트리밍 중 오류가 발생했습니다: {str(e)}"
     
     def _extract_sources(self, documents: List[Document]) -> List[Dict]:
-        """개선된 소스 문서 메타데이터 추출 - URL 정보 우선 처리"""
+        """개선된 소스 문서 메타데이터 추출 - sources 메타데이터 파싱 포함"""
         sources = []
         seen_sources = set()  # 중복 제거
         
@@ -264,55 +267,101 @@ class LangChainService:
             if source_id not in seen_sources:
                 seen_sources.add(source_id)
                 
-                # URL 추출 우선순위:
-                # 1. 메타데이터의 url 필드
-                # 2. 문서 내용에서 URL 패턴 찾기 (링크 형태)
-                # 3. 문서 내용에서 URL: 라벨 찾기
-                url = doc.metadata.get("url", None)
+                # 문서에서 sources 메타데이터 파싱
+                sources_info = self._parse_sources_from_document(doc.page_content)
                 
+                # URL, title, creator 추출
+                url = None
+                creator = None
+                doc_title = None
+                
+                # 1. 파싱된 sources 정보 사용 (우선순위)
+                if sources_info:
+                    first_source = sources_info[0]  # 첫 번째 source 사용
+                    url = first_source.get('url')
+                    creator = first_source.get('creator')
+                    doc_title = first_source.get('title')
+                
+                # 2. 메타데이터에서 대체값 찾기
                 if not url:
-                    # 문서 내용에서 마크다운 링크 패턴 찾기
+                    url = doc.metadata.get("url", None)
+                if not creator:
+                    creator = doc.metadata.get("author", None)
+                if not doc_title:
+                    doc_title = doc.metadata.get("title", None)
+                
+                # 3. 문서 내용에서 URL 패턴 찾기 (fallback)
+                if not url:
                     markdown_link_pattern = r'\[([^\]]+)\]\(([^)]+)\)'
                     link_matches = re.findall(markdown_link_pattern, doc.page_content)
                     if link_matches:
-                        # 첫 번째 링크 사용
                         url = link_matches[0][1]
                 
                 if not url:
-                    # URL: 라벨 패턴 찾기
                     url_pattern = r'URL:\s*`?([^`\s\n]+)`?'
                     url_match = re.search(url_pattern, doc.page_content)
                     if url_match:
                         url = url_match.group(1)
                 
-                # 제목 추출 - 메타데이터의 title이나 첫 번째 헤더 사용
-                title = doc.metadata.get("title", None)
-                if not title:
-                    # 문서 내용에서 첫 번째 헤더 찾기
+                # 4. 제목 추출 (fallback)
+                if not doc_title:
                     header_pattern = r'^#{1,3}\s+(.+)$'
                     header_match = re.search(header_pattern, doc.page_content, re.MULTILINE)
                     if header_match:
-                        title = header_match.group(1).strip()
+                        doc_title = header_match.group(1).strip()
                     else:
-                        # 파일명에서 확장자 제거하여 제목 생성
                         source_filename = doc.metadata.get("source", "Unknown")
-                        title = os.path.splitext(source_filename)[0]
+                        doc_title = os.path.splitext(source_filename)[0]
                 
                 sources.append({
-                    "title": title,
+                    "title": doc_title,
+                    "creator": creator or "Unknown",
                     "category": doc.metadata.get("category", "N/A"),
-                    "author": doc.metadata.get("author", "Unknown"),
+                    "author": doc.metadata.get("author", creator or "Unknown"),
                     "section": doc.metadata.get("section", "N/A"),
                     "chunk_index": doc.metadata.get("chunk_index", 0),
-                    "relevance_score": doc.metadata.get("score", 0),  # 검색 점수
+                    "relevance_score": doc.metadata.get("score", 0),
                     "preview": doc.page_content[:150] + "...",
-                    "url": url,  # URL 정보 추가
-                    "has_url": bool(url)  # URL 존재 여부 플래그
+                    "url": url,
+                    "has_url": bool(url)
                 })
         
         # 관련성 점수로 정렬
         sources.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
         return sources
+    
+    def _parse_sources_from_document(self, content: str) -> List[Dict]:
+        """문서 내용에서 sources 메타데이터 파싱"""
+        try:
+            # YAML front matter 찾기
+            yaml_pattern = r'^---\s*\n(.*?)\n---'
+            yaml_match = re.search(yaml_pattern, content, re.DOTALL | re.MULTILINE)
+            
+            if yaml_match:
+                yaml_content = yaml_match.group(1)
+                try:
+                    # YAML 파싱
+                    metadata = yaml.safe_load(yaml_content)
+                    if isinstance(metadata, dict) and 'sources' in metadata:
+                        sources_list = metadata['sources']
+                        if isinstance(sources_list, list):
+                            parsed_sources = []
+                            for source in sources_list:
+                                if isinstance(source, dict):
+                                    parsed_sources.append({
+                                        'url': source.get('url', ''),
+                                        'title': source.get('title', ''),
+                                        'creator': source.get('creator', '')
+                                    })
+                            return parsed_sources
+                except yaml.YAMLError:
+                    logger.debug("YAML parsing failed for document sources")
+            
+            return []
+            
+        except Exception as e:
+            logger.debug(f"Error parsing sources from document: {e}")
+            return []
     
     async def add_documents(self, documents: List[Document]):
         """문서 추가"""
