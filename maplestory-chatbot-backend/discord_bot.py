@@ -186,19 +186,32 @@ class MapleBot:
         else:
             embed.description = full_response
         
-        # 출처 추가
+        # 출처 추가 - URL만 간단하게 표시
         if sources:
-            source_text = "\n".join([
-                f"• {source.get('title', 'Unknown')}" for source in sources[:3]
-            ])
-            if len(source_text) > 1024:
-                source_text = source_text[:1021] + "..."
+            # URL이 있는 소스만 필터링
+            sources_with_url = [s for s in sources[:3] if s.get('has_url') and s.get('url')]
             
-            embed.add_field(
-                name="📚 참고 자료",
-                value=source_text,
-                inline=False
-            )
+            if sources_with_url:
+                source_lines = []
+                for source in sources_with_url:
+                    url = source.get('url', '')
+                    
+                    # URL만 표시
+                    if url.startswith(('http://', 'https://', 'www.')):
+                        source_lines.append(f"• {url}")
+                
+                if source_lines:
+                    source_text = "\n".join(source_lines)
+                    
+                    # Discord embed 필드 길이 제한 (1024자)
+                    if len(source_text) > 1024:
+                        source_text = source_text[:1021] + "..."
+                    
+                    embed.add_field(
+                        name="📚 참고 자료",
+                        value=source_text,
+                        inline=False
+                    )
         
         # 피드백 요청 추가
         if log_id:
