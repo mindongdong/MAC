@@ -2,7 +2,7 @@
 title: "메이플 하이퍼버닝 MAX 초고속 육성 가이드"
 category: class_guide
 source: "data/markdown/youtube_documents/메이플 하이퍼버닝 MAX 초고속 육성 가이드.md"
-last_updated: "2025-06-19"
+last_updated: "2025-06-20"
 ---
 
 ```
